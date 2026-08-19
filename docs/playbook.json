@@ -1,0 +1,79 @@
+{
+  "TWF": {
+    "label": "Tool Wear Failure",
+    "urgency": "LOW",
+    "summary": "Cutting tool has reached the end of its usable life; edges worn, about to break in the cut. Failure point is random in the 200-240 min window, so this is a risk window, not a certainty.",
+    "recommended_actions": [
+      "Schedule a tool change at the next planned stop",
+      "Inspect cutting edge and finish on recent parts",
+      "Reset the tool-wear counter after replacement"
+    ],
+    "parts_required": [
+      "Replacement cutting tool / insert set"
+    ],
+    "repair_hours": 0.5,
+    "consequence": "Tool breaks mid-cut, scrapping the workpiece and possibly marking the spindle \u2014 a routine swap becomes an unplanned overstrain-class event."
+  },
+  "HDF": {
+    "label": "Heat Dissipation Failure",
+    "urgency": "MEDIUM",
+    "summary": "Process is not shedding heat fast enough (temp difference < 8.6 K while spindle < 1380 rpm). Friction heat accumulates; thermal drift pushes parts out of tolerance.",
+    "recommended_actions": [
+      "Check coolant flow and concentration",
+      "Clear blocked coolant lines or clogged filters",
+      "Verify chiller / heat exchanger is running",
+      "Reduce spindle load or raise speed if coolant is nominal"
+    ],
+    "parts_required": [
+      "Coolant",
+      "Coolant filter",
+      "Heat exchanger service kit (if chiller implicated)"
+    ],
+    "repair_hours": 2.5,
+    "consequence": "Out-of-tolerance parts pass inspection and reach the customer; sustained overheating shortens spindle-bearing life."
+  },
+  "PWF": {
+    "label": "Power Failure",
+    "urgency": "HIGH",
+    "summary": "Mechanical power (torque x angular velocity) has left the 3,500-9,000 W safe band. Under-power = tool stalling; over-power = drive being overdriven. Opposite fixes.",
+    "recommended_actions": [
+      "If under-power/stall: raise spindle speed or reduce feed; check for a binding or dull tool",
+      "If over-power/overdrive: reduce feed rate; inspect spindle drive, motor current, belt tension; check for a seized axis"
+    ],
+    "parts_required": [
+      "Usually none for a parameter fix",
+      "Spindle drive / motor inspection kit if over-power persists"
+    ],
+    "repair_hours": 4.0,
+    "consequence": "Spindle-motor or drive burnout \u2014 a multi-hour, multi-thousand-dollar replacement instead of a parameter change."
+  },
+  "OSF": {
+    "label": "Overstrain Failure",
+    "urgency": "CRITICAL",
+    "summary": "Tool wear x torque has exceeded the overstrain limit for the variant (11,000/12,000/13,000 minNm for L/M/H). A worn tool pushed at high torque; combined strain can snap the tool and damage workpiece or spindle. Most severe mode.",
+    "recommended_actions": [
+      "Stop the operation before the next cut",
+      "Replace the cutting tool",
+      "Reduce feed rate by ~15% to bring wear x torque under the limit",
+      "Inspect workpiece and spindle for damage before resuming"
+    ],
+    "parts_required": [
+      "Replacement cutting tool",
+      "Workpiece (if marked)",
+      "Spindle inspection"
+    ],
+    "repair_hours": 6.0,
+    "consequence": "Catastrophic tool fracture: scrapped part, possible spindle damage, and the longest unplanned downtime of any mode."
+  },
+  "RNF": {
+    "label": "Random Failure",
+    "urgency": "NONE",
+    "summary": "Random failure with no sensor signature; 0.1% chance regardless of parameters, irreducible. Cannot be diagnosed or predicted.",
+    "recommended_actions": [
+      "Manual inspection \u2014 nothing to predict"
+    ],
+    "parts_required": [],
+    "repair_hours": 2.0,
+    "consequence": "None predictable. Belongs on the limitations slide."
+  }
+}

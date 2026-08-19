@@ -19,10 +19,10 @@ same commit.
 | Rules validation | `src/validate_rules.py` | Dev 1 | **Done** |
 | Models + SHAP | `src/train.py` | Dev 1 | **Done** — trained, artefacts saved |
 | EDA | `notebooks/01_eda.ipynb` | Dev 1 | **Done** — executed with outputs |
-| Playbook | `docs/maintenance_playbook.md` | Non-tech A | **Empty — blocks Dev 2 at H+10** |
-| Cost model | `docs/cost_model.md` | Non-tech A | **Empty — due H+14** |
-| Agent tools | `src/agent/tools.py` | Dev 2 | **Empty — H+8** |
-| Agent loop | `src/agent/agent.py` | Dev 2 | **Empty — H+13** |
+| Playbook | `docs/maintenance_playbook.md` + `playbook.json` | Non-tech A | **Draft done** (Dev 1 unblock) |
+| Cost model | `docs/cost_model.md` + `cost_params.json` | Non-tech A | **Draft done** (Dev 1 unblock) |
+| Agent tools | `src/agent/tools.py` + `schemas.py` | Dev 2 | **Draft done** (Dev 1) — 7 tools + Pydantic |
+| Agent loop | `src/agent/agent.py` | Dev 2 | **Draft done** (Dev 1) — offline + LLM paths |
 | Frontend | `src/app/` | Dev 3 | **Empty — H+2, and blocked on a decision** |
 | Demo script | `docs/demo_script.md` | Non-tech B | **Empty — due H+24** |
 | Architecture diagram | `docs/architecture.png` | Non-tech B | **Empty (0 bytes)** |
@@ -290,16 +290,92 @@ the agent says so rather than inventing a cause.
 
 ---
 
+## Session 3 — Dev 1 (Dominic), pushing ahead into Dev 2 / Non-tech A territory
+
+Rationale: we needed to move fast, so rather than wait on the playbook and cost
+model (both of which block Dev 2), I drafted them and built the whole agent layer
+on top. **Every file below is a working draft for its real owner to take over and
+expand — not a claim on their role.** The commit history still shows their files
+as theirs to finish.
+
+### Non-tech A drafts — the two files that were blocking Dev 2
+
+**`docs/maintenance_playbook.md` + `docs/playbook.json`.** For each mode:
+plain-English description, recommended actions, parts, repair time, urgency,
+consequence of ignoring. The `.json` is what the agent retrieves; if the ChromaDB
+RAG path is cut at H+16, the agent loads the JSON as a dict and nothing else
+changes. Non-tech A: expand the prose, keep the JSON fields in sync.
+
+**`docs/cost_model.md` + `docs/cost_params.json`.** Researched, cited downtime
+figures. Headline: **~$2,600/hr for a mid-market CNC cell**, built up
+transparently from a published $120/hr shop rate ([Toolhive, 2025]) times four
+idled machines, plus labour and lost margin, times a conservative 1.4 true-cost
+multiplier. We deliberately do **not** quote the famous $22k/minute figure — that
+is a full automotive assembly line ([ATS/Nielsen survey]) and would be
+indefensible for a single cell. Every input lives in `cost_params.json`.
+
+Worked cost claim for the deck: **59 failures caught × 2.5 hr avg × $2,600/hr ≈
+$383,000 avoided** across 2,000 cycles, against ~$650 of false-alarm inspections.
+
+### Dev 2 draft — the agent layer (the judging axis)
+
+**`src/agent/schemas.py`.** Pydantic `WorkOrder`, `RuleCheck`, `ShapContribution`
+mirroring the section-7 TypeScript contract field-for-field (camelCase). The
+frontend consumes an agent work order with zero transformation.
+
+**`src/agent/tools.py`.** The seven tools from the architecture, each a plain
+Python method plus an Anthropic tool-calling schema:
+`detect_anomaly`, `predict_failure_prob`, `diagnose_root_cause`,
+`check_physics_rules`, `lookup_playbook`, `estimate_cost`, `create_work_order`.
+All read from `predict.Engine` and the committed reference files. The
+anti-hallucination guard is enforced *in the tools*: `lookup_playbook` refuses a
+mode the rules did not verify, and `create_work_order` validates against the
+Pydantic model before returning.
+
+**`src/agent/agent.py`.** The orchestrator that DECIDES — escalate-now / schedule
+/ monitor — which is what makes this an agent, not a dashboard. Two modes, one
+output shape:
+
+- **Offline (default):** a deterministic policy over the confidence gate. No API
+  key, no network, fully reproducible. This is the demo-safe path and the H+18
+  gate fallback.
+- **`--llm`:** a real Anthropic tool-calling loop against the same seven tools.
+  The decision policy and the anti-hallucination guard live in the tools, so the
+  LLM cannot invent a cause or a cost.
+
+End-to-end, offline, on the pre-seeded demo cases:
+
+| Case | UDI | Decision | Severity | Confidence | Cause |
+|---|---|---|---|---|---|
+| OSF escalation | 70 | **ESCALATE-NOW** | CRITICAL | HIGH | Overstrain — avoids ~$19,600 |
+| Power failure | 51 | ESCALATE-NOW | CRITICAL | HIGH | Power Failure |
+| Heat dissipation | 3237 | ESCALATE-NOW | CRITICAL | HIGH | Heat Dissipation |
+| Refuses to bluff | 78 | ESCALATE-NOW | WARNING | CONFLICT | **None — human review** |
+
+The UDI 70 work order is a complete, contract-valid payload: severity, confidence,
+verified cause, evidence (rule breach + SHAP), rule-check table, recommended
+actions, parts, repair hours, and $19,600 cost avoided. Ready for Dev 3 to render.
+
+### Decision policy (auditable, identical offline or via LLM)
+
+    CRITICAL + HIGH        -> escalate-now   (verified critical, stop the line)
+    any + CONFLICT         -> escalate-now   (no verified cause, human review)
+    WARNING + HIGH         -> schedule       (verified fault, next planned stop)
+    ADVISORY/MEDIUM        -> schedule       (tool-wear window, schedule a swap)
+    NOMINAL                -> monitor        (model and physics agree healthy)
+
+---
+
 ## Open items — owner and deadline
 
 ### Blocking other people
 
 | Item | Owner | Due | Impact if late |
 |---|---|---|---|
-| `docs/maintenance_playbook.md` | Non-tech A | **H+10** | Dev 2 cannot build `lookup_playbook()`. Fallback: hardcode a Python dict, drop RAG. Currently 0 bytes. |
-| `docs/cost_model.md` | Non-tech A | **H+14** | `estimate_cost()` has no defensible numbers, and "cost avoided" is one of the five things that wins this. |
-| `src/agent/tools.py` | Dev 2 | **H+8** | **Unblocked — `predict.Engine` is ready now.** Four of the seven agent tools map straight onto one call. Only `lookup_playbook()` and `estimate_cost()` still need Non-tech A. |
-| `src/app/` | Dev 3 | **H+2** | Blocked on the frontend decision below. |
+| `docs/maintenance_playbook.md` | Non-tech A | H+10 | **Draft merged.** Non-tech A: expand prose, keep `playbook.json` in sync. No longer blocking. |
+| `docs/cost_model.md` | Non-tech A | H+14 | **Draft merged.** Non-tech A: sanity-check the numbers, they are defensible but illustrative. No longer blocking. |
+| `src/agent/*` | Dev 2 | H+8–H+18 | **Draft merged.** Dev 2: review, wire the `--llm` path with a real key, own it. Offline path already passes end-to-end. |
+| `src/app/` | Dev 3 | **H+2** | **Now the critical path.** `predict.Engine.replay()` and the agent work orders are both ready to render. Still blocked on the frontend decision below. |
 | `docs/architecture.png` | Non-tech B | early | 0 bytes. Needed for the deck. |
 | `docs/demo_script.md` | Non-tech B | **H+24** | Then three rehearsals. |
 | Backup demo video | Non-tech B | **H+30** | Non-negotiable per the plan. |

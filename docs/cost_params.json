@@ -1,0 +1,21 @@
+{
+  "_comment": "Machine-readable cost inputs. estimate_cost() reads THIS file so the demo and cost_model.md never disagree. Edit numbers here.",
+  "currency": "USD",
+  "downtime_cost_per_hour": 2600,
+  "false_alarm_cost": 32.5,
+  "false_alarm_note": "one ~15-min inspection at a loaded $130/hr",
+  "raw_idle_breakdown": {
+    "machine_burden_per_hr": 120,
+    "machines_idled": 4,
+    "labour_per_hr": 180,
+    "lost_margin_per_hr": 1200,
+    "true_downtime_multiplier": 1.4
+  },
+  "per_mode": {
+    "TWF": {"downtime_hours": 1.0, "collateral_usd": 300,  "collateral_note": "scrapped work-in-progress part"},
+    "HDF": {"downtime_hours": 2.5, "collateral_usd": 800,  "collateral_note": "coolant system service"},
+    "PWF": {"downtime_hours": 4.0, "collateral_usd": 1500, "collateral_note": "drive / electrical inspection"},
+    "OSF": {"downtime_hours": 6.0, "collateral_usd": 4000, "collateral_note": "broken tool + possible spindle damage"},
+    "RNF": {"downtime_hours": 2.0, "collateral_usd": 500,  "collateral_note": "unclassified — inspection only"}
+  }
+}

@@ -36,21 +36,21 @@
   "failure_model": {
     "model": "XGBClassifier",
     "scale_pos_weight": 28.52,
-    "pr_auc": 0.87,
-    "roc_auc": 0.9816,
-    "tuned_threshold": 0.2486,
+    "pr_auc": 0.8811,
+    "roc_auc": 0.9828,
+    "tuned_threshold": 0.2905,
     "target_recall": 0.85,
     "recall": 0.8676,
-    "precision": 0.7468,
-    "f1": 0.8027,
-    "accuracy": 0.9855,
+    "precision": 0.7867,
+    "f1": 0.8252,
+    "accuracy": 0.9875,
     "confusion_matrix": {
-      "tn": 1912,
-      "fp": 20,
+      "tn": 1916,
+      "fp": 16,
       "fn": 9,
       "tp": 59
     },
-    "lift_over_baseline": 25.7
+    "lift_over_baseline": 26.1
   },
   "root_cause": {
     "TWF": {
@@ -75,15 +75,15 @@
     }
   },
   "shap_global_importance": {
-    "tool_wear_min": 1.7998,
-    "power_w": 1.62973,
-    "rotational_speed_rpm": 1.59061,
-    "torque_nm": 0.98564,
-    "temp_diff_k": 0.8489,
-    "osf_margin": 0.79111,
-    "process_temp_k": 0.61401,
-    "air_temp_k": 0.45932,
-    "wear_torque_min_nm": 0.33826,
-    "type_encoded": 0.09547
+    "tool_wear_min": 1.7526,
+    "power_w": 1.62191,
+    "rotational_speed_rpm": 1.59246,
+    "torque_nm": 0.96959,
+    "temp_diff_k": 0.85381,
+    "osf_margin": 0.80597,
+    "process_temp_k": 0.60504,
+    "wear_torque_min_nm": 0.49709,
+    "air_temp_k": 0.40024,
+    "type_encoded": 0.11564
   }
 }

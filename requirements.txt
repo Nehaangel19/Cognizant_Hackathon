@@ -32,3 +32,6 @@ jupyter>=1.1.1
 # --- Deliberately NOT pinned here (see PROGRESS.md "Open decisions") ---
 # fastapi / uvicorn   -> only if Path A (React) frontend is chosen
 # chromadb / sentence-transformers -> only if playbook RAG survives the H+16 gate
+
+# --- Platform & QA (Dev 4) ---
+pytest>=8.0.0

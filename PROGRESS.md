@@ -14,7 +14,8 @@ same commit.
 | Shared plumbing | `.gitignore`, `requirements.txt`, `.env.example` | Dev 1 | **Done** |
 | Dataset | `data/ai4i2020.csv` + `data/README.md` | Dev 1 | **Done** — verified |
 | Features | `src/features.py` | Dev 1 | **Done** |
-| Rules engine | `src/rules_engine.py` | Dev 1 | **Partial** — HDF done, 3 modes TODO |
+| Rules engine | `src/rules_engine.py` | Dev 1 | **Done** — all 4 modes, validated |
+| Inference wrapper | `src/predict.py` | Dev 1 | **Done** — Dev 2/3 entry point |
 | Rules validation | `src/validate_rules.py` | Dev 1 | **Done** |
 | Models + SHAP | `src/train.py` | Dev 1 | **Done** — trained, artefacts saved |
 | EDA | `notebooks/01_eda.ipynb` | Dev 1 | **Done** — executed with outputs |
@@ -190,19 +191,106 @@ it. Establishes six facts, two of which are new and matter:
 
 ---
 
-## Open items — owner and deadline
+---
 
-### Blocking, for Dev 1 (me), next
+## Session 2 — Dev 1 (Dominic)
 
-| Item | Detail |
+### Rules engine complete — all four modes
+
+| Mode | True | Flagged | TP | FP | FN | Precision | Recall |
+|---|---|---|---|---|---|---|---|
+| HDF | 115 | 115 | 115 | 0 | 0 | **1.000** | **1.000** |
+| PWF | 95 | 95 | 95 | 0 | 0 | **1.000** | **1.000** |
+| OSF | 98 | 98 | 98 | 0 | 0 | **1.000** | **1.000** |
+| TWF | 46 | 790 | 43 | 747 | 3 | 0.054 | 0.935 |
+
+Three exact rules, zero false positives between them. Reproduce with
+`python src/validate_rules.py`.
+
+Boundaries were resolved from the data before writing the rules, not guessed:
+
+- **OSF** — the highest non-failing row reaches 10,994 minNm and the lowest
+  failing row is 11,003, a clean gap, so `>` and `>=` are equivalent.
+- **PWF** — the safe power band in the data runs 3,515–8,998 W, so both
+  thresholds sit in clean gaps. 31 of the 95 failures are under-power (tool
+  stalling), 64 are over-power (drive overdriven). The evidence string names
+  which side was breached, because the two get different repairs.
+- **TWF** — three real failures occur at 198, 246 and 253 min, outside the
+  documented 200–240 window. **We deliberately did not widen the window.**
+  Widening to 198–253 lifts recall 0.935 → 0.978, but that is fitting the rule
+  to the label column, which is the exact practice this engine exists to avoid.
+  We keep the documented physics and report the three misses.
+
+### Confidence gate — tool wear demoted to advisory
+
+End-to-end testing across all 10,000 rows exposed a problem: treating the
+tool-wear window as a hard limit produced **665 CONFLICT verdicts**, because the
+window flags 790 rows and only 43 fail. The agent would have cried wolf through
+the entire demo.
+
+Fixed by splitting the rules into two tiers. Only `EXACT_MODES = [OSF, PWF, HDF]`
+can trigger a CONFLICT; a lone tool-wear trigger now yields **MEDIUM** — "schedule
+a tool change at the next planned stop" — which also puts the previously unused
+MEDIUM tier of the frontend `Confidence` type to work.
+
+| | Before | After |
+|---|---|---|
+| HIGH | 9,335 | 9,265 |
+| MEDIUM | — | 643 |
+| CONFLICT | 665 | **92** |
+| **Named cause correct at HIGH confidence** | 323/357 (90.5%) | **287/287 (100%)** |
+
+That last row is the number to put on the evidence slide: **when the agent names
+a root cause at high confidence, it has never been wrong across all 10,000
+readings** — because it is structurally forbidden from naming a cause no exact
+physical rule verified.
+
+### `src/predict.py` — the Dev 2 / Dev 3 entry point
+
+One object, one call, one dict that already matches the frontend data contract.
+
+```python
+from predict import Engine
+engine = Engine()              # loads all artefacts once, ~1s
+signal = engine.score_udi(70)  # everything about one reading
+```
+
+Returns `reading` (camelCase `SensorReading` + `anomalyScore` + `failureProbability`),
+`severity`, `confidence`, `rootCause`, `rationale`, `ruleChecks`, `shapValues`,
+and a pre-built `evidence` list. Also provides `replay()`, a generator over UDIs
+for Dev 3's live-stream simulator.
+
+Without this, Dev 2 and Dev 3 each reimplement model loading, threshold handling,
+anomaly-score normalisation and SHAP plumbing — and by hour 20 the demo shows
+different numbers than the eval slide.
+
+`recommendedActions` and `partsRequired` are returned **empty on purpose**. They
+come from the maintenance playbook, which is Non-tech A's deliverable and Dev 2's
+lookup. Filling them here would be exactly the hallucination the rules engine
+exists to prevent.
+
+### Pre-seeded demo cases
+
+`predict.DEMO_CASES` — real rows with matching ground-truth flags, so the demo
+lands on cue instead of being hunted for live on stage:
+
+| Beat | UDIs |
 |---|---|
-| `check_pwf` | Power outside [3500, 9000] W. Note it is an **OR** (two-sided band), unlike HDF's AND. The evidence string should say which side was breached — a stall and an overdrive get different maintenance actions. |
-| `check_osf` | wear×torque above 11,000 / 12,000 / 13,000 minNm for L / M / H. This is the mode the demo escalates on, so its strings matter most. |
-| `check_twf` | Wear inside the 200–240 min window. Label it a **risk window**, not a verdict. Expect ~0.93 recall and ~0.05 precision, and report that. |
+| Overstrain escalation (the 1:30 beat) | **70**, 161, 162, 243 |
+| Power failure | **51**, 169, 195, 208 |
+| Heat dissipation | 3237, 3761, 3788, 3794 |
+| Agent refuses to bluff (CONFLICT) | **78**, 1088, 1438, 1510 |
 
-Each has a full spec in its docstring in `src/rules_engine.py`. Run
-`python src/validate_rules.py` after each one — HDF, PWF and OSF must all score
-1.000/1.000 or the threshold is wrong.
+UDI 70 is the money shot: wear×torque 12,549 minNm against an 11,000 limit
+(114%), and SHAP's top contributor is `osf_margin` at +4.86. The model and the
+physics point at the same quantity, independently.
+
+UDI 78 is the credibility shot: model risk 97%, no physical limit breached, and
+the agent says so rather than inventing a cause.
+
+---
+
+## Open items — owner and deadline
 
 ### Blocking other people
 
@@ -210,7 +298,7 @@ Each has a full spec in its docstring in `src/rules_engine.py`. Run
 |---|---|---|---|
 | `docs/maintenance_playbook.md` | Non-tech A | **H+10** | Dev 2 cannot build `lookup_playbook()`. Fallback: hardcode a Python dict, drop RAG. Currently 0 bytes. |
 | `docs/cost_model.md` | Non-tech A | **H+14** | `estimate_cost()` has no defensible numbers, and "cost avoided" is one of the five things that wins this. |
-| `src/agent/tools.py` | Dev 2 | **H+8** | `rules_engine.assess()` is ready to be wrapped now — it needs no playbook. Start there. |
+| `src/agent/tools.py` | Dev 2 | **H+8** | **Unblocked — `predict.Engine` is ready now.** Four of the seven agent tools map straight onto one call. Only `lookup_playbook()` and `estimate_cost()` still need Non-tech A. |
 | `src/app/` | Dev 3 | **H+2** | Blocked on the frontend decision below. |
 | `docs/architecture.png` | Non-tech B | early | 0 bytes. Needed for the deck. |
 | `docs/demo_script.md` | Non-tech B | **H+24** | Then three rehearsals. |
@@ -239,8 +327,9 @@ Both are commented out in `requirements.txt` until they are resolved.
    excluded from the root-cause model by design.
 4. **9 failures have no cause label.** Ceiling of 330/339 on rule-based
    explanation.
-5. **Tool-wear rule is a risk window, not a verdict.** ~0.05 precision, and that
-   is the mathematical maximum, not a tuning failure.
+5. **Tool-wear rule is a risk window, not a verdict.** 0.054 precision, and that
+   is the mathematical maximum, not a tuning failure. It is treated as advisory
+   in the confidence gate and never triggers an escalation on its own.
 6. **Probabilities are not calibrated.** `scale_pos_weight` distorts them, so the
    "87%" in a work order is a ranking score, not a literal frequency. Isotonic
    calibration is a 10-minute fix if a judge presses on it.
@@ -257,5 +346,6 @@ pip install -r requirements.txt
 python src/features.py            # sanity check: dataset + feature summary
 python src/validate_rules.py      # score physics rules vs ground truth
 python src/train.py               # train everything, ~30s, writes models/ and docs/
+python src/predict.py             # end-to-end signal for the demo cases
 jupyter lab notebooks/01_eda.ipynb
 ```

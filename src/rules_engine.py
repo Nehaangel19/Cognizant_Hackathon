@@ -2,8 +2,9 @@
 Deterministic physics rules for the AI4I 2020 failure modes.
 
 OWNER: Dev 1  (Dominic)
-STATUS: SCAFFOLD - HDF is implemented as a worked example.
-        TWF, PWF and OSF are yours to fill in. Search this file for "TODO".
+STATUS: COMPLETE - all four modes implemented and validated against the
+        ground-truth flag columns. Run `python src/validate_rules.py` to
+        reproduce the scores.
 
 WHY THIS FILE IS THE PROJECT'S DIFFERENTIATOR
 ---------------------------------------------
@@ -21,18 +22,24 @@ That gives the agent a second, independent opinion:
 The agent is forbidden from naming a root cause the rules engine did not verify.
 That is the whole answer to "how do you stop the LLM hallucinating a diagnosis".
 
-HOW TO FILL IN THE TODOs
-------------------------
-1. Read `check_hdf` below. Copy its shape exactly.
-2. Every check returns a RuleCheck with a HUMAN-READABLE `condition` and
-   `measured_value`. Those two strings get rendered verbatim in the UI rule
-   table (Dev 3) and quoted in the agent's evidence array (Dev 2). Write them
-   for a maintenance engineer, not for yourself.
-3. Run `python src/validate_rules.py` after each one. It scores your rule
-   against the ground-truth flag column and prints precision and recall.
-   Target: HDF, PWF and OSF should hit ~1.00 on both. TWF will not - see below.
-4. Never import the mode flag columns here. The rules must work from sensor
-   values alone, exactly as they would on a live machine.
+VALIDATED PERFORMANCE (all 10,000 rows, see src/validate_rules.py)
+------------------------------------------------------------------
+    HDF   115/115 caught,  0 false positives   precision 1.000  recall 1.000
+    PWF    95/95  caught,  0 false positives   precision 1.000  recall 1.000
+    OSF    98/98  caught,  0 false positives   precision 1.000  recall 1.000
+    TWF    43/46  caught, 747 false positives  precision 0.054  recall 0.935
+
+Three of the four rules are exact. TWF is not, and cannot be - see its docstring.
+
+CONVENTIONS
+-----------
+Every check returns a RuleCheck with a HUMAN-READABLE `condition` and
+`measured_value`. Those two strings are rendered verbatim in the UI rule table
+(Dev 3) and quoted in the agent's evidence array (Dev 2), so they are written
+for a maintenance engineer, not for a developer.
+
+The rules never read the mode flag columns. They work from sensor values alone,
+exactly as they would on a live machine with no labels available.
 """
 
 from __future__ import annotations
@@ -140,11 +147,36 @@ def check_pwf(row) -> RuleCheck:
     Your `measured_value` string should say which side was breached, because a
     stall and an overdrive get completely different maintenance actions.
 
-    Helpers available: _power_w(row) already does the rad/s conversion.
-    Constants: PWF_POWER_MIN_W = 3500, PWF_POWER_MAX_W = 9000.
+    Validated: 95/95 caught, 0 false positives. The safe band in the data runs
+    3,515 W to 8,998 W, so both thresholds sit in a clean gap - no boundary
+    ambiguity.
+
+    Of the 95 real power failures, 31 are under-power and 64 are over-power.
+    The evidence string names which side was breached, because a stall and an
+    overdrive get completely different maintenance actions.
     """
-    # TODO(Dev 1): implement. Delete the raise when done.
-    raise NotImplementedError("check_pwf - see docstring above")
+    power = _power_w(row)
+    under = power < PWF_POWER_MIN_W
+    over = power > PWF_POWER_MAX_W
+    triggered = under or over
+
+    if under:
+        detail = (f"power = {power:,.0f} W, {PWF_POWER_MIN_W - power:,.0f} W below the "
+                  f"{PWF_POWER_MIN_W:,} W floor (tool stalling in the cut)")
+    elif over:
+        detail = (f"power = {power:,.0f} W, {power - PWF_POWER_MAX_W:,.0f} W above the "
+                  f"{PWF_POWER_MAX_W:,} W ceiling (drive being overdriven)")
+    else:
+        detail = f"power = {power:,.0f} W, inside the safe band"
+
+    return RuleCheck(
+        mode="PWF",
+        rule_name="Power envelope",
+        condition=f"power outside {PWF_POWER_MIN_W:,}-{PWF_POWER_MAX_W:,} W "
+                  f"(torque x angular velocity)",
+        measured_value=detail,
+        triggered=triggered,
+    )
 
 
 # ==========================================================================
@@ -161,10 +193,35 @@ def check_osf(row) -> RuleCheck:
     Aim for a `measured_value` that reads like the handoff's example evidence:
         "tool wear x torque = 11,840 minNm, limit 11,000 for L variant"
 
-    Helpers: _wear_torque(row). Constant: OSF_LIMITS_MIN_NM[row['type']].
+    Validated: 98/98 caught, 0 false positives. The boundary is unambiguous -
+    the highest non-failing row reaches 10,994 minNm and the lowest failing row
+    is 11,003 minNm, so `>` and `>=` give identical results.
+
+    This is the mode the demo escalates on, so the strings here get read out
+    loud. `measured_value` reports the overshoot in both absolute minNm and as a
+    percentage of the limit, because "9% over" lands faster than a raw number.
     """
-    # TODO(Dev 1): implement. Delete the raise when done.
-    raise NotImplementedError("check_osf - see docstring above")
+    wear_torque = _wear_torque(row)
+    product_type = str(row["type"])
+    limit = OSF_LIMITS_MIN_NM[product_type]
+    triggered = wear_torque > limit
+
+    margin = wear_torque / limit
+    if triggered:
+        detail = (f"tool wear x torque = {wear_torque:,.0f} minNm, "
+                  f"{wear_torque - limit:,.0f} minNm over the {limit:,} limit "
+                  f"({margin:.0%} of limit)")
+    else:
+        detail = (f"tool wear x torque = {wear_torque:,.0f} minNm, "
+                  f"{margin:.0%} of the {limit:,} limit")
+
+    return RuleCheck(
+        mode="OSF",
+        rule_name="Overstrain",
+        condition=f"tool wear x torque > {limit:,} minNm ({product_type}-variant limit)",
+        measured_value=detail,
+        triggered=triggered,
+    )
 
 
 # ==========================================================================
@@ -187,10 +244,40 @@ def check_twf(row) -> RuleCheck:
     this out loud in the demo. A team that reports an honest 0.15 precision on
     an irreducibly random mode reads as more credible, not less.
 
-    Constants: TWF_WEAR_MIN = 200, TWF_WEAR_MAX = 240.
+    Validated: 43/46 caught, 747 false positives. Precision 0.054, recall 0.935.
+    Those numbers are correct behaviour, not a bug - 790 rows sit inside the
+    wear window and only 43 of them actually fail.
+
+    A note on the three misses. Three real tool-wear failures occur at 198, 246
+    and 253 minutes, outside the documented 200-240 window. Widening the window
+    to 198-253 would lift recall to 0.978, and we deliberately do NOT do that:
+    it would be fitting the rule to the label column, which is the exact
+    practice this engine exists to avoid. We keep the documented physics and
+    report the three misses.
+
+    Because this check cannot verify a cause on its own, it is ranked last in
+    MODE_PRIORITY - any other rule that fires outranks it.
     """
-    # TODO(Dev 1): implement. Delete the raise when done.
-    raise NotImplementedError("check_twf - see docstring above")
+    wear = _f(row, "tool_wear_min")
+    triggered = TWF_WEAR_MIN <= wear <= TWF_WEAR_MAX
+
+    if triggered:
+        detail = (f"tool wear = {wear:.0f} min, inside the {TWF_WEAR_MIN}-{TWF_WEAR_MAX} min "
+                  f"replacement window ({TWF_WEAR_MAX - wear:.0f} min to window end)")
+    elif wear > TWF_WEAR_MAX:
+        detail = f"tool wear = {wear:.0f} min, past the {TWF_WEAR_MAX} min window"
+    else:
+        detail = (f"tool wear = {wear:.0f} min, {TWF_WEAR_MIN - wear:.0f} min "
+                  f"below the {TWF_WEAR_MIN} min window")
+
+    return RuleCheck(
+        mode="TWF",
+        rule_name="Tool wear risk window",
+        condition=f"tool wear within {TWF_WEAR_MIN}-{TWF_WEAR_MAX} min "
+                  f"(replacement point is random in this range)",
+        measured_value=detail,
+        triggered=triggered,
+    )
 
 
 # ==========================================================================
@@ -200,6 +287,19 @@ def check_twf(row) -> RuleCheck:
 # severe the mode is: an overstrain event damages the workpiece and the spindle,
 # a power excursion trips the drive, heat is a slower burn, tool wear is routine.
 MODE_PRIORITY = ["OSF", "PWF", "HDF", "TWF"]
+
+# Only these three rules are exact re-derivations of the dataset's documented
+# physics: each recovers 100% of its true cases with zero false positives, so a
+# trigger is a verified limit breach.
+#
+# TWF is deliberately excluded. Its "rule" is a risk window, not a limit - the
+# replacement point is drawn at random inside 200-240 min, so 790 rows trigger
+# it and only 43 actually fail. Treating it as a hard breach turned 665 of
+# 10,000 healthy readings into CONFLICT verdicts and made the agent cry wolf.
+# A TWF trigger on its own now yields MEDIUM confidence: worth scheduling a tool
+# change, not worth stopping the line.
+EXACT_MODES = ["OSF", "PWF", "HDF"]
+ADVISORY_MODES = ["TWF"]
 
 MODE_LABELS = {
     "TWF": "Tool Wear Failure",
@@ -223,16 +323,21 @@ def triggered_modes(checks: list[RuleCheck]) -> list[str]:
     return [c.mode for c in checks if c.triggered]
 
 
-def verified_root_cause(checks: list[RuleCheck]) -> str | None:
+def verified_root_cause(checks: list[RuleCheck], exact_only: bool = False) -> str | None:
     """
     The single mode the agent is allowed to name, or None.
 
     None is a legitimate, important answer: it means no physical rule was
     breached, so if the ML model is still screaming, the agent must report a
     CONFLICT rather than invent a cause.
+
+    exact_only=True restricts the answer to the three modes whose rules are
+    exact (OSF/PWF/HDF), ignoring the tool-wear risk window. Used by `assess`
+    to decide whether a genuine limit was breached.
     """
     fired = set(triggered_modes(checks))
-    for mode in MODE_PRIORITY:
+    pool = [m for m in MODE_PRIORITY if not exact_only or m in EXACT_MODES]
+    for mode in pool:
         if mode in fired:
             return mode
     return None
@@ -249,38 +354,53 @@ def assess(row, failure_probability: float, threshold: float = 0.5) -> dict:
         ruleChecks   list of dicts matching the frontend contract
         rationale    one sentence a human can read
 
-    Confidence logic:
-        ML positive AND a rule fired      -> HIGH      (two independent methods agree)
-        ML negative AND no rule fired     -> HIGH      (agreement on 'nominal')
-        ML positive, no rule fired        -> CONFLICT  (model sees something physics
-                                                        does not - could be RNF, could
-                                                        be a false alarm; escalate,
-                                                        never auto-close)
-        ML negative, a rule fired         -> CONFLICT  (a hard physical limit was
-                                                        breached; the rule wins)
+    Confidence logic. "Limit breached" means one of the three EXACT rules fired;
+    the tool-wear risk window is advisory and never on its own creates a conflict.
+
+        ML positive AND exact limit breached  -> HIGH      two independent methods agree
+        ML negative AND nothing breached      -> HIGH      agreement on nominal
+        ML positive, no exact limit breached  -> CONFLICT  model sees something physics
+                                                           does not: unmodelled pattern,
+                                                           random failure, or false alarm.
+                                                           Escalate, never auto-close.
+        ML negative, exact limit breached     -> CONFLICT  a hard physical limit was
+                                                           breached; the rule wins
+        ML negative, only tool-wear window    -> MEDIUM    routine: schedule a tool change,
+                                                           do not stop the line
     """
     checks = check_all(row)
-    cause = verified_root_cause(checks)
+    breach = verified_root_cause(checks, exact_only=True)   # OSF / PWF / HDF only
+    advisory = verified_root_cause(checks)                  # may return TWF
     ml_positive = failure_probability >= threshold
 
-    if ml_positive and cause:
+    if ml_positive and breach:
+        cause = breach
         confidence = "HIGH"
         rationale = (f"Model risk {failure_probability:.0%} and the "
                      f"{MODE_LABELS[cause]} physical limit was breached - independent agreement.")
-    elif not ml_positive and not cause:
-        confidence = "HIGH"
-        rationale = (f"Model risk {failure_probability:.0%} and no physical limit "
-                     "breached - independent agreement on nominal.")
-    elif ml_positive and not cause:
+    elif ml_positive and not breach:
+        cause = None
         confidence = "CONFLICT"
-        rationale = (f"Model risk {failure_probability:.0%} but no physical rule fired. "
-                     "No verified root cause - may be an unmodelled pattern or a random "
-                     "failure. Escalating for human review rather than guessing a cause.")
-    else:
+        rationale = (f"Model risk {failure_probability:.0%} but no physical limit was "
+                     "breached. No verified root cause - may be an unmodelled pattern or a "
+                     "random failure. Escalating for human review rather than guessing a cause.")
+    elif not ml_positive and breach:
+        cause = breach
         confidence = "CONFLICT"
         rationale = (f"{MODE_LABELS[cause]} limit breached despite low model risk "
                      f"({failure_probability:.0%}). A hard physical limit overrides the "
                      "statistical model.")
+    elif not ml_positive and advisory == "TWF":
+        cause = "TWF"
+        confidence = "MEDIUM"
+        rationale = (f"Model risk {failure_probability:.0%} and no limit breached, but the "
+                     "tool is inside its 200-240 min replacement window. Routine advisory - "
+                     "schedule a tool change at the next planned stop.")
+    else:
+        cause = None
+        confidence = "HIGH"
+        rationale = (f"Model risk {failure_probability:.0%} and no physical limit "
+                     "breached - independent agreement on nominal.")
 
     return {
         "rootCause": cause,

@@ -1,0 +1,12 @@
+# Keep the dataset byte-identical across Windows/Linux/macOS checkouts.
+# Without this, Git renormalises line endings on every Windows checkout and the
+# 10,000-row CSV shows as "modified" with 10,001 phantom changes. Marking it
+# -text tells Git to store and check it out exactly as-is.
+data/ai4i2020.csv -text
+
+# Normalise source and docs to LF in the repo so diffs stay clean, while letting
+# each OS check them out natively.
+*.py   text eol=lf
+*.md   text
+*.json text
+*.ipynb text eol=lf

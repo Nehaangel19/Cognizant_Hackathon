@@ -1,0 +1,34 @@
+# Predictive Maintenance Agent - Cognizant Hackathon
+# Install:  pip install -r requirements.txt
+# Python 3.10+ required.
+
+# --- Core ML (Dev 1) ---
+pandas>=2.2.3
+numpy>=1.26.4
+scikit-learn>=1.5.2
+xgboost>=2.1.3
+imbalanced-learn>=0.12.4
+joblib>=1.4.2
+
+# --- Explainability (Dev 1) ---
+shap>=0.46.0
+matplotlib>=3.9.2
+plotly>=5.24.1
+
+# --- Data access ---
+ucimlrepo>=0.0.7          # fallback source: fetch_ucirepo(id=601)
+
+# --- Agent layer (Dev 2) ---
+anthropic>=0.39.0
+pydantic>=2.9.2
+
+# --- Interface (Dev 3) ---
+streamlit>=1.40.2
+
+# --- Infra ---
+python-dotenv>=1.0.1
+jupyter>=1.1.1
+
+# --- Deliberately NOT pinned here (see PROGRESS.md "Open decisions") ---
+# fastapi / uvicorn   -> only if Path A (React) frontend is chosen
+# chromadb / sentence-transformers -> only if playbook RAG survives the H+16 gate

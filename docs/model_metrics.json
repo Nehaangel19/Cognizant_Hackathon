@@ -1,0 +1,89 @@
+{
+  "dataset": {
+    "rows": 10000,
+    "failures": 339,
+    "positive_rate": 0.0339
+  },
+  "split": {
+    "test_size": 0.2,
+    "random_state": 42,
+    "train_rows": 8000,
+    "test_rows": 2000,
+    "test_failures": 68
+  },
+  "features": [
+    "air_temp_k",
+    "process_temp_k",
+    "rotational_speed_rpm",
+    "torque_nm",
+    "tool_wear_min",
+    "temp_diff_k",
+    "power_w",
+    "wear_torque_min_nm",
+    "osf_margin",
+    "type_encoded"
+  ],
+  "baseline": {
+    "dummy_pr_auc": 0.0338,
+    "never_fails_accuracy": 0.966
+  },
+  "anomaly": {
+    "pr_auc": 0.3545,
+    "score_min": 0.4044435860848593,
+    "score_max": 0.6346010930767569,
+    "fit_rows": 7729
+  },
+  "failure_model": {
+    "model": "XGBClassifier",
+    "scale_pos_weight": 28.52,
+    "pr_auc": 0.87,
+    "roc_auc": 0.9816,
+    "tuned_threshold": 0.2486,
+    "target_recall": 0.85,
+    "recall": 0.8676,
+    "precision": 0.7468,
+    "f1": 0.8027,
+    "accuracy": 0.9855,
+    "confusion_matrix": {
+      "tn": 1912,
+      "fp": 20,
+      "fn": 9,
+      "tp": 59
+    },
+    "lift_over_baseline": 25.7
+  },
+  "root_cause": {
+    "TWF": {
+      "train_positives": 36,
+      "test_positives": 10,
+      "pr_auc": 0.0704
+    },
+    "HDF": {
+      "train_positives": 86,
+      "test_positives": 29,
+      "pr_auc": 0.9867
+    },
+    "PWF": {
+      "train_positives": 82,
+      "test_positives": 13,
+      "pr_auc": 0.9282
+    },
+    "OSF": {
+      "train_positives": 82,
+      "test_positives": 16,
+      "pr_auc": 0.9883
+    }
+  },
+  "shap_global_importance": {
+    "tool_wear_min": 1.7998,
+    "power_w": 1.62973,
+    "rotational_speed_rpm": 1.59061,
+    "torque_nm": 0.98564,
+    "temp_diff_k": 0.8489,
+    "osf_margin": 0.79111,
+    "process_temp_k": 0.61401,
+    "air_temp_k": 0.45932,
+    "wear_torque_min_nm": 0.33826,
+    "type_encoded": 0.09547
+  }
+}

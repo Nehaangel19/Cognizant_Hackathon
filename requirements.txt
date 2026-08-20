@@ -35,3 +35,7 @@ jupyter>=1.1.1
 
 # --- Platform & QA (Dev 4) ---
 pytest>=8.0.0
+
+# --- API layer (Path A frontend) ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0

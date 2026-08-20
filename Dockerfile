@@ -14,15 +14,16 @@
 
 FROM public.ecr.aws/lambda/python:3.12
 
-# Build toolchain for any dependency without a manylinux wheel for this platform.
-# Removed in the same layer so it never reaches the final image.
+# No dnf/gcc step: xgboost, shap, scikit-learn, pandas and numpy all ship
+# prebuilt manylinux wheels for Python 3.12 on x86_64, so nothing here compiles
+# from source. This also sidesteps `dnf` entirely, which on some Windows/Docker
+# Desktop setups fails its TLS handshake to the Amazon Linux mirrors (antivirus
+# or corporate network TLS-inspection tooling intercepting the connection) with
+# an "unable to get local issuer certificate" error that has nothing to do with
+# this project. If a future dependency genuinely needs compiling, prefer finding
+# a wheel-only alternative before reintroducing a package-manager step here.
 COPY deploy/requirements-lambda.txt ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
-
-RUN dnf install -y gcc gcc-c++ \
- && pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt \
- && dnf remove -y gcc gcc-c++ \
- && dnf clean all \
- && rm -rf /var/cache/dnf
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
 
 # The repo layout is preserved inside the image on purpose. features.py derives
 # REPO_ROOT as `Path(__file__).parent.parent`, so src/ must sit one level under

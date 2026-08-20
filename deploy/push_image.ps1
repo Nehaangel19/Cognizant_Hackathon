@@ -29,7 +29,12 @@ param(
     [string]$Tag    = "latest"
 )
 
-$ErrorActionPreference = "Stop"
+# NOT "Stop". Under Stop, PowerShell 5.1 turns *any* native-command stderr output
+# into a terminating NativeCommandError — and docker writes its seccomp warning,
+# its build progress, and its push progress all to stderr. The script would abort
+# on output that is not an error at all. Every external call below is checked
+# explicitly via $LASTEXITCODE instead, which is what actually indicates failure.
+$ErrorActionPreference = "Continue"
 
 # The build context must be the repo root — bail early rather than producing a
 # confusing "COPY src/: not found" halfway through the build.
@@ -38,11 +43,11 @@ if (-not (Test-Path ".\Dockerfile")) {
 }
 
 Write-Host "==> Checking prerequisites" -ForegroundColor Cyan
-docker info *> $null
+docker info 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Docker does not appear to be running. Start Docker Desktop and retry." }
 
-$Account = (aws sts get-caller-identity --query Account --output text)
-if ($LASTEXITCODE -ne 0) { throw "AWS CLI is not configured. Run 'aws configure' first." }
+$Account = (aws sts get-caller-identity --query Account --output text 2>&1)
+if ($LASTEXITCODE -ne 0) { throw "AWS CLI is not configured. Run 'aws configure' first. ($Account)" }
 
 $Registry = "$Account.dkr.ecr.$Region.amazonaws.com"
 $ImageUri = "$Registry/${Repo}:$Tag"
@@ -51,7 +56,7 @@ Write-Host "    region   $Region"
 Write-Host "    image    $ImageUri"
 
 Write-Host "==> Ensuring ECR repository exists" -ForegroundColor Cyan
-aws ecr describe-repositories --repository-names $Repo --region $Region *> $null
+aws ecr describe-repositories --repository-names $Repo --region $Region 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "    creating $Repo"
     aws ecr create-repository --repository-name $Repo --region $Region | Out-Null

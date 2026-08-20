@@ -1,3 +1,4 @@
+// build: force fresh asset hashes for the AWS Amplify redeploy
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import type { Health } from './types';
@@ -16,6 +17,7 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export default function App() {
+  console.info('[sentinelops] build cb=aws-deploy-2');
   const [tab, setTab] = useState<Tab>('live');
   const [cycleId, setCycleId] = useState(70);
   const [health, setHealth] = useState<Health | null>(null);

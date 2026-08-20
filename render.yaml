@@ -1,0 +1,17 @@
+# Render Blueprint — deploys the FastAPI backend without touching the Lambda
+# path at all. Both can coexist: this is a plain long-lived process (uvicorn),
+# not a container built from the Dockerfile above (that one is Lambda-specific,
+# built on the AWS base image, and not usable here).
+#
+# Console → New → Blueprint → point at this repo. Render reads this file
+# automatically. Or configure the same settings manually under New → Web Service.
+services:
+  - type: web
+    name: sentinelops-api
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: ALLOWED_ORIGINS
+        sync: false   # set after the frontend is deployed and its URL is known

@@ -1,5 +1,6 @@
 # --- Secrets (CRITICAL — never commit these) ---
 .env
+.env.backup
 .env.local
 .env.*.local
 *.pem

@@ -1,37 +1,5 @@
-# --- Python ---
-__pycache__/
-*.py[cod]
-*.egg-info/
-venv/
-.venv/
-env/
 
-# --- Notebooks ---
-.ipynb_checkpoints/
-
-# --- Secrets ---
-.env
-.env.local
-
-# --- Model artefacts (regenerate with: python src/train.py) ---
-models/*
-!models/.gitkeep
-
-# --- Data ---
-# Everything in data/ is ignored EXCEPT the canonical dataset and its README,
-# so all five of us train on byte-identical input.
-data/*
-!data/README.md
-!data/ai4i2020.csv
-
-# --- OS / editor ---
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-
-# --- Platform & QA (Dev 4) ---
-.pytest_cache/
-tests/__pycache__/
-docs/calibration_curve.png
-docs/verification_report.md
+# --- Frontend (Dev 3 / Path A) ---
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo

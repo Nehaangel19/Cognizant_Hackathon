@@ -29,3 +29,9 @@ data/*
 Thumbs.db
 .idea/
 .vscode/
+
+# --- Platform & QA (Dev 4) ---
+.pytest_cache/
+tests/__pycache__/
+docs/calibration_curve.png
+docs/verification_report.md

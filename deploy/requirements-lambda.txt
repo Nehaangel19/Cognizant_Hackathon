@@ -1,0 +1,29 @@
+# Runtime dependencies for the Lambda container image ONLY.
+#
+# Deliberately NOT the repo's requirements.txt. That file installs streamlit,
+# jupyter, matplotlib, plotly and ucimlrepo — all needed for training and local
+# development, none of them imported by the API at request time. Leaving them
+# out cuts the image roughly in half and takes minutes off every `docker build`.
+#
+# If you add an import to src/api, src/predict.py, src/rules_engine.py,
+# src/features.py or src/agent/, check whether it needs to be added here too.
+
+fastapi>=0.115.0
+mangum>=0.19.0
+pydantic>=2.9.2
+
+pandas>=2.2.3
+numpy>=1.26.4
+scikit-learn>=1.5.2
+xgboost>=2.1.3
+shap>=0.46.0
+joblib>=1.4.2
+
+# Only used when MODEL_S3_BUCKET is set. The Lambda base image already ships
+# boto3, but pinning it here keeps `docker run` locally working too.
+boto3>=1.35.0
+
+# NOTE: `anthropic` is intentionally absent. The agent imports it lazily inside
+# _run_anthropic(), so offline mode (the demo path) works without it, and an
+# accidental mode="llm" request degrades to the offline fallback rather than
+# crashing. Add it here if you turn the LLM path back on.

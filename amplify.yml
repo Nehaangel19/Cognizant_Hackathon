@@ -1,0 +1,42 @@
+# AWS Amplify Hosting build spec for the SentinelOps dashboard.
+#
+# Amplify auto-detects Vite, but only when the app is at the repo root. Ours is
+# in frontend/, so the monorepo form below is required — `appRoot` is what tells
+# Amplify where to cd before running these phases.
+#
+# In the Amplify console this file is picked up automatically from the repo root.
+# If you paste a build spec into the console UI instead, the console copy wins
+# and this file is ignored, which makes for a confusing debugging session — so
+# prefer keeping it here, in version control, where the team can see it.
+#
+# REQUIRED ENVIRONMENT VARIABLE (set in Amplify console -> Hosting -> Environment
+# variables, NOT here — it changes per deployment):
+#
+#   VITE_API_BASE = https://<api-id>.execute-api.<region>.amazonaws.com
+#
+# Vite inlines env vars at BUILD time, not run time, so changing this value
+# requires a redeploy (Amplify console -> Redeploy this version). If it is unset,
+# frontend/src/api.ts falls back to '/api', which only works behind the local
+# Vite dev proxy and will 404 in production.
+
+version: 1
+applications:
+  - appRoot: frontend
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            # `ci` not `install` — respects package-lock.json exactly, so the
+            # deployed build matches what was tested locally.
+            - npm ci
+        build:
+          commands:
+            - npm run build
+      artifacts:
+        # `npm run build` is `tsc -b && vite build`; vite writes to frontend/dist.
+        baseDirectory: dist
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*

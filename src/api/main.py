@@ -23,13 +23,16 @@ so the frontend consumes them with zero transformation.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent
+HERE = Path(__file__).resolve().parent
+SRC = HERE.parent
 sys.path.insert(0, str(SRC))
 sys.path.insert(0, str(SRC / "agent"))
+sys.path.insert(0, str(HERE))   # so `model_store` resolves however we were imported
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,15 +45,27 @@ STATE: dict = {"engine": None, "agent": None, "cache": {}, "error": None}
 
 
 # --------------------------------------------------------------------------
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Load models once. If they are missing, the API still starts and /health
-    reports the problem, rather than crashing with an opaque traceback."""
+def load_models() -> None:
+    """Load the Engine and Agent into STATE. Idempotent — safe to call twice.
+
+    Kept separate from the lifespan hook because AWS Lambda does not run ASGI
+    lifespan events the way a long-lived uvicorn process does. There, this is
+    called once at module import (i.e. once per warm container) by
+    `src/api/lambda_handler.py`. Locally, the lifespan hook below calls it.
+    Same code path either way, so local and deployed behaviour cannot drift.
+    """
+    if STATE["engine"] is not None:
+        return
     try:
         from predict import Engine
         from agent.agent import MaintenanceAgent
 
-        engine = Engine()
+        # On Lambda this pulls the .joblib artefacts from S3 into /tmp the first
+        # time; locally it is a no-op and the bundled models/ dir is used.
+        from model_store import ensure_models
+        model_dir = ensure_models()
+
+        engine = Engine(model_dir=model_dir) if model_dir else Engine()
         STATE["engine"] = engine
         STATE["agent"] = MaintenanceAgent()
         print(f"[api] models loaded — threshold {engine.threshold:.4f}")
@@ -58,6 +73,13 @@ async def lifespan(app: FastAPI):
         STATE["error"] = f"{type(exc).__name__}: {exc}"
         print(f"[api] MODEL LOAD FAILED: {STATE['error']}\n"
               f"[api] Run `python src/train.py` first.", file=sys.stderr)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load models once. If they are missing, the API still starts and /health
+    reports the problem, rather than crashing with an opaque traceback."""
+    load_models()
     yield
     STATE.clear()
 
@@ -69,14 +91,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Local dev origins are always allowed. The deployed frontend origin is added
+# via the ALLOWED_ORIGINS env var (comma-separated) so that pointing this at a
+# new Amplify URL is a console config change, not a code change and redeploy.
+#   e.g. ALLOWED_ORIGINS=https://main.d1234abcd.amplifyapp.com
+_LOCAL_ORIGINS = [
+    "http://localhost:5173", "http://127.0.0.1:5173",   # Vite
+    "http://localhost:3000", "http://127.0.0.1:3000",   # CRA / Next
+    "http://localhost:4173",                             # Vite preview
+    "http://localhost:8501",                             # Streamlit
+]
+_EXTRA_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",   # Vite
-        "http://localhost:3000", "http://127.0.0.1:3000",   # CRA / Next
-        "http://localhost:4173",                             # Vite preview
-        "http://localhost:8501",                             # Streamlit
-    ],
+    allow_origins=_LOCAL_ORIGINS + _EXTRA_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

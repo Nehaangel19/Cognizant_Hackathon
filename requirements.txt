@@ -39,3 +39,8 @@ pytest>=8.0.0
 # --- API layer (Path A frontend) ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
+
+# --- AWS deployment (Lambda container) ---
+# Only needed to run the API on Lambda; the local uvicorn path does not use it.
+# The image installs deploy/requirements-lambda.txt, not this file.
+mangum>=0.19.0

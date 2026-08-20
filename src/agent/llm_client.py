@@ -6,7 +6,8 @@ chosen because this system does NOT need open-ended reasoning:
 
 WHY A SMALL (~3B) MODEL, NOT A HEAVYWEIGHT ONE:
   The numeric decision (does this machine fail, and which failure mode) is made
-  by a calibrated Random Forest (see 03_train_classifier.py), not by the LLM.
+  by an XGBoost classifier plus a deterministic physics rules engine
+  (see src/train.py and src/rules_engine.py), not by the LLM.
   The LLM's job is narrow and repetitive across millions of sensor readings:
     1. Read structured tool output (numbers, flags).
     2. Decide whether to escalate, on a fixed rubric.
@@ -30,6 +31,14 @@ GENERATION SETTINGS (tuned for structured/deterministic output, not prose):
   max_tokens  = 200   -> hard cap; outputs are one JSON object + one sentence,
                          a large cap only invites rambling and wasted cost
   stop        = ["```", "\\n\\n\\n"] -> stop generation the instant the JSON block closes
+
+NOTE ON NAMING (important for honesty in the pitch):
+  `LocalTemplateLLM` below is NOT a language model. It is a hardcoded decision
+  table that mimics what a small instruct model would return, so the pipeline
+  runs end-to-end with zero setup. Never describe its output as an "LLM result".
+  The genuine LLM path is `MaintenanceAgent.run_llm()` in agent.py, which calls
+  the Anthropic API with real tool-calling and reports mode='llm' only when the
+  API actually answered.
 
 This module ships with two interchangeable backends:
   - LocalTemplateLLM : a deterministic, dependency-free stand-in so the whole

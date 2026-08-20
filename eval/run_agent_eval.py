@@ -30,22 +30,30 @@ def load_eval_set():
 
 
 def run_agent_on_cycle(cycle_id, use_llm=False):
-    """Run the agent on a single cycle, return (work_order_dict, validated, error_msg)."""
+    """
+    Run the agent on a single cycle.
+    Returns (work_order_dict, validated, error_msg, mode_actually_used).
+
+    `mode_actually_used` matters: run_llm() falls back to the offline path when
+    the API is unavailable, and reporting those runs as "LLM" results would be a
+    false claim. The caller counts fallbacks and prints them.
+    """
     agent = MaintenanceAgent(toolbox=Toolbox())
     try:
         if use_llm:
             res = agent.run_llm(cycle_id)
         else:
             res = agent.run(cycle_id)
+        mode_used = res.get("mode", "offline")
         wo = res["workOrder"]
         # Validate against Pydantic WorkOrder model
         try:
             validated = WorkOrder(**wo)
-            return validated.model_dump(), True, None
+            return validated.model_dump(), True, None, mode_used
         except Exception as e:
-            return wo, False, str(e)
+            return wo, False, str(e), mode_used
     except Exception as e:
-        return None, False, str(e)
+        return None, False, str(e), "error"
 
 
 def check_hallucination(expected_rootCause, actualRootCause):
@@ -67,8 +75,8 @@ def main():
     total = len(eval_cases)
 
     results = {
-        'offline': {'root_correct': 0, 'decision_correct': 0, 'hallucinations': 0, 'schema_valid': 0},
-        'llm': {'root_correct': 0, 'decision_correct': 0, 'hallucinations': 0, 'schema_valid': 0},
+        'offline': {'root_correct': 0, 'decision_correct': 0, 'hallucinations': 0, 'schema_valid': 0, 'fell_back': 0},
+        'llm': {'root_correct': 0, 'decision_correct': 0, 'hallucinations': 0, 'schema_valid': 0, 'fell_back': 0},
     }
 
     print(f"\n{'=' * 70}")
@@ -79,7 +87,9 @@ def main():
         print(f"\n--- Running in {mode.upper()} mode ---")
         for i, case in enumerate(eval_cases, 1):
             cycle_id = case['cycleId']
-            wo_dict, valid, error = run_agent_on_cycle(cycle_id, mode == "llm")
+            wo_dict, valid, error, mode_used = run_agent_on_cycle(cycle_id, mode == "llm")
+            if mode == "llm" and mode_used != "llm":
+                results[mode]['fell_back'] += 1
 
             if wo_dict is None:
                 print(f"  UDI {cycle_id}: ERROR - {error}")
@@ -116,14 +126,42 @@ def main():
         print(f"  Decision accuracy: {results[mode]['decision_correct']}/{total} = {dec_acc:.1f}% (target: >= 22/25)")
         print(f"  Hallucination rate: {results[mode]['hallucinations']}/{total} = {hall_rate:.1f}% (target: 0%)")
         print(f"  Schema validity: {results[mode]['schema_valid']}/{total} = {schema_rate:.1f}% (target: 25/25)")
+        if mode == "llm":
+            fb = results[mode]['fell_back']
+            if fb == total:
+                print(f"  !! ALL {total} cases fell back to the offline path. "
+                      "The LLM was NEVER exercised - these are offline numbers.")
+                print("  !! Do not report these as LLM results. Check ANTHROPIC_API_KEY and AGENT_MODEL.")
+            elif fb:
+                print(f"  !! {fb}/{total} cases fell back to the offline path "
+                      "(API error). Genuine LLM runs: {total - fb}.")
+            else:
+                print(f"  OK: all {total} cases ran genuinely through the LLM.")
 
     # Write summary to docs/agent_eval.md
     md_path = Path(__file__).parent.parent / "docs" / "agent_eval.md"
     md_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(md_path, 'w') as f:
+        fb = results['llm']['fell_back']
+        genuine = total - fb
+        if fb == total:
+            llm_label = "LLM (NOT RUN - all fell back)"
+        elif fb:
+            llm_label = f"LLM ({genuine}/{total} genuine, {fb} fell back)"
+        else:
+            llm_label = "LLM"
+
         f.write("# Agent Evaluation Results\n\n")
-        f.write("| Metric | Offline | LLM |\n")
+        if fb == total:
+            f.write("> **WARNING:** every LLM-mode case fell back to the offline\n"
+                    "> deterministic path, so the LLM column below is a copy of the offline\n"
+                    "> column, NOT a measurement of the LLM. Do not quote it as an LLM result.\n"
+                    "> Fix the API key / model id and re-run `python eval/run_agent_eval.py`.\n\n")
+        elif fb:
+            f.write(f"> **Note:** {fb} of {total} LLM-mode cases fell back to the offline path "
+                    f"due to API errors. Only {genuine} are genuine LLM runs.\n\n")
+        f.write(f"| Metric | Offline | {llm_label} |\n")
         f.write("|---|---|---|\n")
         root_offline = results['offline']['root_correct'] / total * 100
         root_llm = results['llm']['root_correct'] / total * 100

@@ -39,7 +39,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # src
 
 from tools import Toolbox, anthropic_tool_schemas
 from predict import DEMO_CASES
-from llm_client import get_llm_client, LocalTemplateLLM, OllamaLLM
+from features import REPO_ROOT
+
+# Override with AGENT_MODEL in .env if this model id is unavailable to your key.
+DEFAULT_LLM_MODEL = "claude-sonnet-4-5"
 
 # --------------------------------------------------------------------------
 # The decision policy — the core of "it decides something"
@@ -117,7 +120,8 @@ class MaintenanceAgent:
         wo = self.tb.create_work_order(cycle_id, decision, created_at);  trace.append("create_work_order")
 
         narration = self._narrate(wo, why)
-        return {"workOrder": wo, "narration": narration, "decisionReason": why, "toolTrace": trace}
+        return {"workOrder": wo, "narration": narration, "decisionReason": why,
+                "toolTrace": trace, "mode": "offline"}
 
     @staticmethod
     def _narrate(wo: dict, why: str) -> str:
@@ -139,126 +143,113 @@ class MaintenanceAgent:
             body = " Continue monitoring."
         return head + body
 
-    # ---- MODE B: tool-calling loop (with fallback) ----------------------------
+    # ---- MODE B: real Anthropic tool-calling loop ---------------------------
     def run_llm(self, cycle_id: int, model: str | None = None, max_turns: int = 8,
-                 timeout_per_call: float = 15.0) -> dict:
+                timeout_s: float = 60.0) -> dict:
         """
-        Tool-calling loop with retry, timeout, and hard fallback.
-        If the LLM path raises, times out, or exceeds max turns,
-        automatically falls back to the offline deterministic path
-        and logs that it did. The demo must never show a stack trace.
-        """
-        llm = get_llm_client(model=model)
-        system_prompt = SYSTEM_PROMPT
-        user_prompt = f"Analyse cycle {cycle_id} and reach a decision."
+        Genuine tool-calling loop against the Anthropic API.
 
-        # Warm-up: test that the LLM client works
+        The model is given the same seven tools the offline path uses. It decides
+        which to call and in what order, but it CANNOT invent a root cause or a
+        cost: `diagnose_root_cause` only returns what the physics rules verified,
+        `lookup_playbook` refuses an unverified mode, and `create_work_order`
+        validates against the Pydantic contract. The guard lives in the tools,
+        not in the prompt, so a persuasive model cannot talk its way past it.
+
+        If anything fails - no API key, network down, rate limit, bad model name,
+        max turns exceeded - this falls back to the offline deterministic path
+        and SAYS SO in the returned dict. The demo never shows a stack trace, and
+        the eval can never silently report a fallback as an LLM result.
+
+        Returns the same shape as run(), plus:
+            mode            'llm' | 'offline-fallback'
+            fallbackReason  why it fell back (only when mode is offline-fallback)
+        """
         try:
-            _call_llm_with_retry(llm, system_prompt, user_prompt,
-                                 {"role": "sensor_anomaly", "max_abs_zscore": 0, "max_zscore_sensor": "none"},
-                                 max_retries=1, base_backoff=0.1)
-        except Exception:
-            pass  # non-fatal; we'll fall back if actual cycle fails
-
-        trace, work_order = [], None
-
-        # Run with per-call timeout and retry
-        deadline = time.time() + timeout_per_call * 4  # generous overall wall-clock limit
-
-        for turn in range(max_turns):
-            if time.time() > deadline:
-                print("[agent] LLM loop terminated: timeout exceeded", file=sys.stderr)
-                break
-
-            try:
-                resp = llm.generate(system_prompt, user_prompt, {"role": "user", "context": None})
-            except Exception as e:
-                print(f"[agent] LLM generate exception: {e}, falling back to offline path", file=sys.stderr)
-                break
-
-            if resp is None:
-                print("[agent] LLM returned None, falling back to offline path", file=sys.stderr)
-                break
-
-            # Handle string output (LocalTemplateLLM) vs structured output
-            if isinstance(resp, str):
-                # String output from LocalTemplateLLM - it's already JSON
-                # Parse it to check structure
-                try:
-                    parsed = json.loads(resp)
-                    # If it contains work order fields, use it
-                    if "rootCause" in parsed or "decision" in parsed:
-                        # Build a minimal trace
-                        trace = ["offline_fallback"]
-                        work_order = self.run(cycle_id)["workOrder"]
-                        break
-                except json.JSONDecodeError:
-                    pass  # not JSON, treat as text
-                # Treat as final text; if we don't have a work_order yet, fall back
-                if work_order is None:
-                    print("[agent] LLM returned non-JSON text, falling back offline", file=sys.stderr)
-                    work_order = self.run(cycle_id)["workOrder"]
-                    trace = ["offline_fallback"]
-                    break
-                # Otherwise we already have a work_order from a prior turn
-                else:
-                    final_text = resp
-                    # Continue to tool processing below
-            else:
-                final_text = "".join(b.text for b in resp.content if b.type == "text") if hasattr(resp, 'content') else ""
-
-            # Check if model called a tool (for OllamaLLM/Anthropic)
-            # For LocalTemplateLLM returning a dict, we need different handling
-            if isinstance(resp, dict) and "content" in resp:
-                # Structured response from OllamaLLM/Anthropic
-                tool_blocks = [b for b in resp.content if b.type == "tool_use"] if hasattr(resp, 'content') else []
-                if tool_blocks:
-                    # Model called a tool - process them
-                    results = []
-                    for block in tool_blocks:
-                        trace.append(block.name)
-                        fn = getattr(self.tb, block.name)
-                        try:
-                            out = fn(**block.input)
-                        except Exception as e:
-                            print(f"[agent] Tool {block.name} raised {e}, continuing", file=sys.stderr)
-                            continue
-                        if block.name == "create_work_order":
-                            work_order = out
-                        results.append({"type": "tool_result", "tool_use_id": block.id,
-                                        "content": json.dumps(out)})
-                    messages.append({"role": "user", "content": results})
-                    continue  # next turn
-                else:
-                    # No tool calls - model gave up or gave text
-                    if work_order is None:
-                        print("[agent] LLM did not call create_work_order, falling back offline", file=sys.stderr)
-                        work_order = self.run(cycle_id)["workOrder"]
-                        trace = ["offline_fallback"]
-                    final_text = final_text or "(no text from model)"
-            elif isinstance(resp, str):
-                # String output - check if we need to fallback
-                if work_order is None:
-                    print("[agent] LLM returned string without tool calls, falling back offline", file=sys.stderr)
-                    work_order = self.run(cycle_id)["workOrder"]
-                    trace = ["offline_fallback"]
-                    break
-                else:
-                    # We already have a work order, just use the text
-                    final_text = resp
-
-        # ---- Fallback logic ---------------------------------------------------
-        if work_order is None:
-            print("[agent] LLM path produced no work order — using offline deterministic path", file=sys.stderr)
+            return self._run_anthropic(cycle_id, model, max_turns, timeout_s)
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            print(f"[agent] LLM path unavailable ({reason}) - using offline path",
+                  file=sys.stderr)
             res = self.run(cycle_id)
-            work_order = res["workOrder"]
-            if trace and trace[0] != "offline_fallback":
-                trace = ["offline_fallback"] + trace
-            narration = self._narrate(work_order, "")
-        else:
-            narration = self._narrate(work_order, "")
+            res["mode"] = "offline-fallback"
+            res["fallbackReason"] = reason
+            return res
 
-        return {"workOrder": work_order, "narration": narration, "toolTrace": trace}
+    def _run_anthropic(self, cycle_id: int, model: str | None,
+                       max_turns: int, timeout_s: float) -> dict:
+        """The actual API loop. Raises on any failure; run_llm catches and falls back."""
+        import anthropic
+
+        # Load .env if python-dotenv is available, so ANTHROPIC_API_KEY is picked
+        # up without the user having to export it manually.
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(REPO_ROOT / ".env")
+        except Exception:
+            pass
+
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not set. Add it to .env or export it. "
+                "The offline path (`python src/agent/agent.py <id>`) needs no key."
+            )
+
+        model = model or os.environ.get("AGENT_MODEL", DEFAULT_LLM_MODEL)
+        client = anthropic.Anthropic(timeout=timeout_s)
+        tools = anthropic_tool_schemas()
+
+        messages: list[dict] = [{
+            "role": "user",
+            "content": (f"Analyse cycle {cycle_id} and reach a decision. "
+                        "Follow the tool order in your instructions and finish by "
+                        "calling create_work_order."),
+        }]
+        trace: list[str] = []
+        work_order = None
+        deadline = time.time() + timeout_s * max_turns
+
+        for _turn in range(max_turns):
+            if time.time() > deadline:
+                raise TimeoutError(f"exceeded overall deadline of {timeout_s * max_turns:.0f}s")
+
+            resp = client.messages.create(
+                model=model, max_tokens=1500, system=SYSTEM_PROMPT,
+                tools=tools, messages=messages,
+            )
+            messages.append({"role": "assistant", "content": resp.content})
+
+            if resp.stop_reason != "tool_use":
+                final_text = "".join(b.text for b in resp.content if b.type == "text")
+                if work_order is None:
+                    raise RuntimeError("model stopped without calling create_work_order")
+                return {"workOrder": work_order,
+                        "narration": final_text.strip() or self._narrate(work_order, ""),
+                        "decisionReason": work_order.get("decision", ""),
+                        "toolTrace": trace, "mode": "llm", "model": model}
+
+            results = []
+            for block in resp.content:
+                if block.type != "tool_use":
+                    continue
+                trace.append(block.name)
+                fn = getattr(self.tb, block.name, None)
+                if fn is None:
+                    payload = {"error": f"unknown tool {block.name}"}
+                else:
+                    try:
+                        payload = fn(**block.input)
+                        if block.name == "create_work_order":
+                            work_order = payload
+                    except Exception as exc:
+                        # Hand the error back to the model rather than crashing;
+                        # it can retry with corrected arguments.
+                        payload = {"error": f"{type(exc).__name__}: {exc}"}
+                results.append({"type": "tool_result", "tool_use_id": block.id,
+                                "content": json.dumps(payload)})
+            messages.append({"role": "user", "content": results})
+
+        raise RuntimeError(f"exceeded max_turns={max_turns} without a work order")
 
 
 def decision_verb(decision: str) -> str:

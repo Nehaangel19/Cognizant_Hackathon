@@ -1,0 +1,177 @@
+[
+  {
+    "cycleId": 161,
+    "expectedRootCause": "OSF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "OSF overstrain failure, margin > 1.0x limit"
+  },
+  {
+    "cycleId": 249,
+    "expectedRootCause": "OSF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "OSF overstrain failure, margin > 1.0x limit"
+  },
+  {
+    "cycleId": 1162,
+    "expectedRootCause": "OSF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "OSF overstrain failure, margin > 1.0x limit"
+  },
+  {
+    "cycleId": 1335,
+    "expectedRootCause": "OSF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "OSF overstrain failure, margin > 1.0x limit"
+  },
+  {
+    "cycleId": 2332,
+    "expectedRootCause": "OSF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "OSF overstrain failure, margin > 1.0x limit"
+  },
+  {
+    "cycleId": 51,
+    "expectedRootCause": "PWF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Power failure, power > 9kW"
+  },
+  {
+    "cycleId": 169,
+    "expectedRootCause": "PWF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Power failure, power > 9kW"
+  },
+  {
+    "cycleId": 195,
+    "expectedRootCause": "PWF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Power failure, power > 9kW"
+  },
+  {
+    "cycleId": 208,
+    "expectedRootCause": "PWF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Power failure, power > 9kW"
+  },
+  {
+    "cycleId": 312,
+    "expectedRootCause": "PWF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Power failure, consistent PWF case"
+  },
+  {
+    "cycleId": 3237,
+    "expectedRootCause": "HDF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Heat dissipation failure"
+  },
+  {
+    "cycleId": 3761,
+    "expectedRootCause": "HDF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Heat dissipation failure"
+  },
+  {
+    "cycleId": 3788,
+    "expectedRootCause": "HDF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Heat dissipation failure"
+  },
+  {
+    "cycleId": 3794,
+    "expectedRootCause": "HDF",
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "HIGH",
+    "note": "Heat dissipation failure"
+  },
+  {
+    "cycleId": 78,
+    "expectedRootCause": null,
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "CONFLICT",
+    "note": "Model-physics disagreement, TWF risk window - no verified cause"
+  },
+  {
+    "cycleId": 1088,
+    "expectedRootCause": null,
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "CONFLICT",
+    "note": "Model-physics disagreement, no verified cause"
+  },
+  {
+    "cycleId": 1438,
+    "expectedRootCause": null,
+    "expectedDecision": "escalate-now",
+    "expectedConfidence": "CONFLICT",
+    "note": "Model-physics disagreement, no verified cause"
+  },
+  {
+    "cycleId": 1,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 2,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 3,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 5001,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 5002,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 5003,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 5004,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  },
+  {
+    "cycleId": 5005,
+    "expectedRootCause": null,
+    "expectedDecision": "monitor",
+    "expectedConfidence": "HIGH",
+    "note": "Nominal cycle, healthy, no mode flags"
+  }
+]

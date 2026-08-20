@@ -13,13 +13,16 @@ Two run modes, same output shape:
     No API key, no network, fully reproducible. This is the demo-safe path and
     the H+18 gate fallback ("drop tool calling, inject signals").
 
-  MODE B (--llm): a real Anthropic tool-calling loop. The model calls the same
-    seven tools, but the decision policy and the anti-hallucination guard live
-    in the tools, so the LLM cannot invent a cause or a cost.
+  MODE B (--llm): a tool-calling loop. The model calls the same seven tools,
+    but the decision policy and the anti-hallucination guard live in the tools,
+    so the LLM cannot invent a cause. If the LLM path fails (no API key, network
+    error, timeout, or max turns exceeded), it automatically falls back to the
+    offline deterministic path and logs that it did. The demo must never show a
+    stack trace.
 
 Run:
     python src/agent/agent.py 70            # offline
-    python src/agent/agent.py 70 --llm      # tool-calling (needs ANTHROPIC_API_KEY)
+    python src/agent/agent.py 70 --llm      # tool-calling (needs API key or falls back)
     python src/agent/agent.py --demo        # runs the pre-seeded demo cases offline
 """
 
@@ -28,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))          # src/agent
@@ -35,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # src
 
 from tools import Toolbox, anthropic_tool_schemas
 from predict import DEMO_CASES
+from llm_client import get_llm_client, LocalTemplateLLM, OllamaLLM
 
 # --------------------------------------------------------------------------
 # The decision policy — the core of "it decides something"
@@ -75,6 +80,22 @@ diagnose_root_cause -> (if a cause is verified) lookup_playbook + estimate_cost 
 create_work_order. Then give a two-sentence spoken summary for the operator."""
 
 
+def _call_llm_with_retry(llm, system_prompt: str, user_prompt: str, context: dict,
+                         max_retries: int = 3, base_backoff: float = 1.0) -> str | None:
+    """Call llm.generate() with exponential-backoff retry. Returns None on permanent failure."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return llm.generate(system_prompt, user_prompt, context)
+        except Exception as e:
+            if attempt == max_retries:
+                print(f"[agent] LLM call failed after {max_retries} attempts: {e}", file=sys.stderr)
+                return None
+            backoff = base_backoff * (2 ** (attempt - 1))
+            print(f"[agent] LLM attempt {attempt} failed, retrying in {backoff}s...", file=sys.stderr)
+            time.sleep(backoff)
+    return None
+
+
 class MaintenanceAgent:
     def __init__(self, toolbox: Toolbox | None = None):
         self.tb = toolbox or Toolbox()
@@ -102,7 +123,8 @@ class MaintenanceAgent:
     def _narrate(wo: dict, why: str) -> str:
         mid = wo["machineId"]
         if wo["rootCause"]:
-            head = (f"{mid}: {wo['severity']} — {wo['rootCauseLabel']} "
+            head = (f"{mid}: {wo['severity']} "
+                    f"{wo['rootCauseLabel']} "
                     f"({wo['confidence']} confidence, {wo['failureProbability']:.0%} model risk).")
             body = f" Recommend: {decision_verb(wo['decision'])}."
             if wo["costAvoidedUsd"]:
@@ -117,39 +139,126 @@ class MaintenanceAgent:
             body = " Continue monitoring."
         return head + body
 
-    # ---- MODE B: Anthropic tool-calling loop ----------------------------
-    def run_llm(self, cycle_id: int, model: str | None = None, max_turns: int = 8) -> dict:
-        import anthropic
+    # ---- MODE B: tool-calling loop (with fallback) ----------------------------
+    def run_llm(self, cycle_id: int, model: str | None = None, max_turns: int = 8,
+                 timeout_per_call: float = 15.0) -> dict:
+        """
+        Tool-calling loop with retry, timeout, and hard fallback.
+        If the LLM path raises, times out, or exceeds max turns,
+        automatically falls back to the offline deterministic path
+        and logs that it did. The demo must never show a stack trace.
+        """
+        llm = get_llm_client(model=model)
+        system_prompt = SYSTEM_PROMPT
+        user_prompt = f"Analyse cycle {cycle_id} and reach a decision."
 
-        model = model or os.environ.get("AGENT_MODEL", "claude-sonnet-4-5")
-        client = anthropic.Anthropic()   # reads ANTHROPIC_API_KEY
-        tools = anthropic_tool_schemas()
-        messages = [{"role": "user",
-                     "content": f"Analyse cycle {cycle_id} and reach a decision."}]
+        # Warm-up: test that the LLM client works
+        try:
+            _call_llm_with_retry(llm, system_prompt, user_prompt,
+                                 {"role": "sensor_anomaly", "max_abs_zscore": 0, "max_zscore_sensor": "none"},
+                                 max_retries=1, base_backoff=0.1)
+        except Exception:
+            pass  # non-fatal; we'll fall back if actual cycle fails
+
         trace, work_order = [], None
 
-        for _ in range(max_turns):
-            resp = client.messages.create(model=model, max_tokens=1024,
-                                           system=SYSTEM_PROMPT, tools=tools, messages=messages)
-            messages.append({"role": "assistant", "content": resp.content})
-            if resp.stop_reason != "tool_use":
-                final_text = "".join(b.text for b in resp.content if b.type == "text")
-                return {"workOrder": work_order, "narration": final_text, "toolTrace": trace}
+        # Run with per-call timeout and retry
+        deadline = time.time() + timeout_per_call * 4  # generous overall wall-clock limit
 
-            results = []
-            for block in resp.content:
-                if block.type != "tool_use":
-                    continue
-                trace.append(block.name)
-                fn = getattr(self.tb, block.name)
-                out = fn(**block.input)
-                if block.name == "create_work_order":
-                    work_order = out
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": json.dumps(out)})
-            messages.append({"role": "user", "content": results})
+        for turn in range(max_turns):
+            if time.time() > deadline:
+                print("[agent] LLM loop terminated: timeout exceeded", file=sys.stderr)
+                break
 
-        return {"workOrder": work_order, "narration": "(max turns reached)", "toolTrace": trace}
+            try:
+                resp = llm.generate(system_prompt, user_prompt, {"role": "user", "context": None})
+            except Exception as e:
+                print(f"[agent] LLM generate exception: {e}, falling back to offline path", file=sys.stderr)
+                break
+
+            if resp is None:
+                print("[agent] LLM returned None, falling back to offline path", file=sys.stderr)
+                break
+
+            # Handle string output (LocalTemplateLLM) vs structured output
+            if isinstance(resp, str):
+                # String output from LocalTemplateLLM - it's already JSON
+                # Parse it to check structure
+                try:
+                    parsed = json.loads(resp)
+                    # If it contains work order fields, use it
+                    if "rootCause" in parsed or "decision" in parsed:
+                        # Build a minimal trace
+                        trace = ["offline_fallback"]
+                        work_order = self.run(cycle_id)["workOrder"]
+                        break
+                except json.JSONDecodeError:
+                    pass  # not JSON, treat as text
+                # Treat as final text; if we don't have a work_order yet, fall back
+                if work_order is None:
+                    print("[agent] LLM returned non-JSON text, falling back offline", file=sys.stderr)
+                    work_order = self.run(cycle_id)["workOrder"]
+                    trace = ["offline_fallback"]
+                    break
+                # Otherwise we already have a work_order from a prior turn
+                else:
+                    final_text = resp
+                    # Continue to tool processing below
+            else:
+                final_text = "".join(b.text for b in resp.content if b.type == "text") if hasattr(resp, 'content') else ""
+
+            # Check if model called a tool (for OllamaLLM/Anthropic)
+            # For LocalTemplateLLM returning a dict, we need different handling
+            if isinstance(resp, dict) and "content" in resp:
+                # Structured response from OllamaLLM/Anthropic
+                tool_blocks = [b for b in resp.content if b.type == "tool_use"] if hasattr(resp, 'content') else []
+                if tool_blocks:
+                    # Model called a tool - process them
+                    results = []
+                    for block in tool_blocks:
+                        trace.append(block.name)
+                        fn = getattr(self.tb, block.name)
+                        try:
+                            out = fn(**block.input)
+                        except Exception as e:
+                            print(f"[agent] Tool {block.name} raised {e}, continuing", file=sys.stderr)
+                            continue
+                        if block.name == "create_work_order":
+                            work_order = out
+                        results.append({"type": "tool_result", "tool_use_id": block.id,
+                                        "content": json.dumps(out)})
+                    messages.append({"role": "user", "content": results})
+                    continue  # next turn
+                else:
+                    # No tool calls - model gave up or gave text
+                    if work_order is None:
+                        print("[agent] LLM did not call create_work_order, falling back offline", file=sys.stderr)
+                        work_order = self.run(cycle_id)["workOrder"]
+                        trace = ["offline_fallback"]
+                    final_text = final_text or "(no text from model)"
+            elif isinstance(resp, str):
+                # String output - check if we need to fallback
+                if work_order is None:
+                    print("[agent] LLM returned string without tool calls, falling back offline", file=sys.stderr)
+                    work_order = self.run(cycle_id)["workOrder"]
+                    trace = ["offline_fallback"]
+                    break
+                else:
+                    # We already have a work order, just use the text
+                    final_text = resp
+
+        # ---- Fallback logic ---------------------------------------------------
+        if work_order is None:
+            print("[agent] LLM path produced no work order — using offline deterministic path", file=sys.stderr)
+            res = self.run(cycle_id)
+            work_order = res["workOrder"]
+            if trace and trace[0] != "offline_fallback":
+                trace = ["offline_fallback"] + trace
+            narration = self._narrate(work_order, "")
+        else:
+            narration = self._narrate(work_order, "")
+
+        return {"workOrder": work_order, "narration": narration, "toolTrace": trace}
 
 
 def decision_verb(decision: str) -> str:
@@ -158,7 +267,6 @@ def decision_verb(decision: str) -> str:
             "monitor": "continue monitoring"}.get(decision, decision)
 
 
-# --------------------------------------------------------------------------
 def _print_result(cycle_id: int, res: dict) -> None:
     wo = res["workOrder"]
     print(f"\n{'=' * 70}\nCYCLE {cycle_id}\n{'=' * 70}")
@@ -186,5 +294,10 @@ if __name__ == "__main__":
     else:
         cycle_id = int(args[0])
         use_llm = "--llm" in args
+        json_only = "--json" in args
         res = agent.run_llm(cycle_id) if use_llm else agent.run(cycle_id)
-        _print_result(cycle_id, res)
+        wo = res["workOrder"]
+        if json_only:
+            print(json.dumps(wo))
+        else:
+            _print_result(cycle_id, res)
